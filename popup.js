@@ -124,13 +124,15 @@ class ScreenshotExtension {
     analysisUrl.searchParams.set('getVerticalSize', 'true');
     
     // Create window with selected viewport width and standard height for analysis
-    const windowWidth = this.selectedViewport;
+    // Ensure values are integers for Chrome API
+    const windowWidth = parseInt(this.selectedViewport);
     const windowHeight = 1200; // Always 1200px for analysis
     
     console.log('🔍 CREATING ANALYSIS WINDOW:');
     console.log('  - URL:', analysisUrl.toString());
     console.log('  - Selected viewport width:', this.selectedViewport);
     console.log('  - Window dimensions:', `${windowWidth}x${windowHeight}`);
+    console.log('  - Data types:', `width: ${typeof windowWidth}, height: ${typeof windowHeight}`);
     
     const window = await chrome.windows.create({
       url: analysisUrl.toString(),
@@ -150,8 +152,9 @@ class ScreenshotExtension {
     captureUrl.searchParams.set('screenshotMode', 'true');
     
     // Create window with exact dimensions: selected width × analyzed height
-    const windowWidth = this.selectedViewport;
-    const windowHeight = dimensions.totalHeight;
+    // Ensure values are integers for Chrome API
+    const windowWidth = parseInt(this.selectedViewport);
+    const windowHeight = parseInt(dimensions.totalHeight);
     
     console.log('📸 CREATING CAPTURE WINDOW:');
     console.log('  - URL:', captureUrl.toString());
@@ -159,6 +162,7 @@ class ScreenshotExtension {
     console.log('  - Selected viewport width:', this.selectedViewport);
     console.log('  - Analyzed page height:', dimensions.totalHeight);
     console.log('  - Final window dimensions:', `${windowWidth}x${windowHeight}`);
+    console.log('  - Data types:', `width: ${typeof windowWidth}, height: ${typeof windowHeight}`);
     
     const window = await chrome.windows.create({
       url: captureUrl.toString(),
