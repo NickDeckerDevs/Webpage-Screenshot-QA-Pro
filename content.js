@@ -451,13 +451,20 @@ class FullPageCapture {
   }
 
   performDimensionAnalysis(viewportWidth) {
+    console.log('🔍 STARTING DIMENSION ANALYSIS:');
+    console.log('  - Current URL:', window.location.href);
+    console.log('  - Target viewport width:', viewportWidth);
+    console.log('  - Current window size:', `${window.innerWidth}x${window.innerHeight}`);
+    
     // Set viewport width first if specified
     if (viewportWidth) {
+      console.log('  - Setting viewport width to:', viewportWidth);
       this.setViewportWidth(parseInt(viewportWidth));
     }
 
     // Wait for page to fully load and render
     const startAnalysis = () => {
+      console.log('🔍 Beginning measurement process...');
       // Force layout recalculation
       document.body.offsetHeight;
       
@@ -491,26 +498,42 @@ class FullPageCapture {
         
         const totalHeight = Math.max(...heights, maxBottom, window.innerHeight);
         
+        const totalWidth = Math.max(
+          body.scrollWidth,
+          body.offsetWidth,
+          html.scrollWidth,
+          html.offsetWidth,
+          html.clientWidth,
+          window.innerWidth
+        );
+
         // Store dimensions globally for popup to access
         window.pageDimensions = {
           totalHeight,
-          totalWidth: Math.max(
-            body.scrollWidth,
-            body.offsetWidth,
-            html.scrollWidth,
-            html.offsetWidth,
-            html.clientWidth,
-            window.innerWidth
-          ),
+          totalWidth,
           viewportHeight: window.innerHeight,
           viewportWidth: window.innerWidth,
-          analysisComplete: true
+          analysisComplete: true,
+          debug: {
+            allHeights: heights,
+            maxElementBottom: maxBottom,
+            bodyScrollHeight: body.scrollHeight,
+            htmlScrollHeight: html.scrollHeight,
+            windowInnerHeight: window.innerHeight,
+            selectedHeight: totalHeight
+          }
         };
         
         // Mark analysis as complete
         window.dimensionAnalysisComplete = true;
         
-        console.log('Dimension analysis complete:', window.pageDimensions);
+        console.log('🔍 DIMENSION ANALYSIS COMPLETE:');
+        console.log('📏 Raw height measurements:', heights);
+        console.log('📏 Max element bottom:', maxBottom);
+        console.log('📏 Selected total height:', totalHeight);
+        console.log('📏 Selected total width:', totalWidth);
+        console.log('📏 Current viewport:', `${window.innerWidth}x${window.innerHeight}`);
+        console.log('📏 Complete dimensions object:', window.pageDimensions);
         
         // Hide analysis overlay after a short delay
         setTimeout(() => {

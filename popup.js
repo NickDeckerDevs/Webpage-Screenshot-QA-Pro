@@ -82,8 +82,9 @@ class ScreenshotExtension {
       this.updateLoadingStep('Measuring page dimensions...');
       const pageDimensions = await this.waitForDimensionAnalysis(analysisWindow.tabs[0].id);
       
-      // Step 3: Close analysis window
-      await chrome.windows.remove(analysisWindow.id);
+      // Step 3: Log analysis results and keep window open for debugging
+      console.log('📐 ANALYSIS COMPLETE - Page Dimensions:', pageDimensions);
+      console.log('📐 Analysis window will remain open for debugging');
       
       // Step 4: Create capture window with exact dimensions
       this.updateLoadingStep('Creating capture window...');
@@ -104,8 +105,8 @@ class ScreenshotExtension {
       this.updateLoadingStep('Processing and downloading...');
       await this.downloadScreenshot(screenshotData, tab.title || 'screenshot');
       
-      // Step 8: Close capture window
-      await chrome.windows.remove(captureWindow.id);
+      // Step 8: Keep capture window open for debugging
+      console.log('📸 CAPTURE COMPLETE - Both windows left open for manual inspection');
       
       this.showSuccessState();
       
@@ -127,13 +128,21 @@ class ScreenshotExtension {
     const windowWidth = this.selectedViewport + 20; // Small padding for scrollbars
     const windowHeight = 800; // Standard height for analysis
     
-    return await chrome.windows.create({
+    console.log('🔍 CREATING ANALYSIS WINDOW:');
+    console.log('  - URL:', analysisUrl.toString());
+    console.log('  - Target viewport width:', this.selectedViewport);
+    console.log('  - Window dimensions:', `${windowWidth}x${windowHeight}`);
+    
+    const window = await chrome.windows.create({
       url: analysisUrl.toString(),
       type: 'normal',
       width: windowWidth,
       height: windowHeight,
       focused: false // Don't steal focus from current window
     });
+    
+    console.log('🔍 Analysis window created:', window);
+    return window;
   }
 
   async createCaptureWindow(url, dimensions) {
@@ -151,13 +160,24 @@ class ScreenshotExtension {
     const maxHeight = 1200; // Reasonable max height
     const finalHeight = Math.min(windowHeight, maxHeight);
     
-    return await chrome.windows.create({
+    console.log('📸 CREATING CAPTURE WINDOW:');
+    console.log('  - URL:', captureUrl.toString());
+    console.log('  - Page dimensions from analysis:', dimensions);
+    console.log('  - Calculated window width:', windowWidth);
+    console.log('  - Calculated window height (before cap):', windowHeight);
+    console.log('  - Final window height (after cap):', finalHeight);
+    console.log('  - Max height limit:', maxHeight);
+    
+    const window = await chrome.windows.create({
       url: captureUrl.toString(),
       type: 'normal',
       width: windowWidth,
       height: finalHeight,
       focused: false // Don't steal focus from current window
     });
+    
+    console.log('📸 Capture window created:', window);
+    return window;
   }
 
   async waitForDimensionAnalysis(tabId) {
@@ -187,12 +207,15 @@ class ScreenshotExtension {
             }, (dimensionResults) => {
               clearTimeout(timeout);
               if (dimensionResults && dimensionResults[0] && dimensionResults[0].result) {
+                console.log('✅ Successfully retrieved dimensions from analysis window:', dimensionResults[0].result);
                 resolve(dimensionResults[0].result);
               } else {
+                console.error('❌ Failed to retrieve dimensions from analysis window');
                 reject(new Error('Failed to get page dimensions'));
               }
             });
           } else {
+            console.log('⏳ Analysis still in progress, checking again...');
             setTimeout(checkForDimensions, 500);
           }
         });
