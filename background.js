@@ -9,6 +9,9 @@ chrome.action.onClicked.addListener(async (tab) => {
   try {
     // This will only trigger if popup fails to open
     console.log('Extension icon clicked for tab:', tab.id);
+    
+    // Validate we can capture this tab
+    await validateTabPermissions(tab.id);
   } catch (error) {
     console.error('Error handling action click:', error);
   }
@@ -27,6 +30,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       url: sender.tab?.url,
       title: sender.tab?.title
     });
+  }
+  
+  if (request.action === 'validatePermissions') {
+    validateTabPermissions(request.tabId)
+      .then(() => sendResponse({ success: true }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
   }
 });
 

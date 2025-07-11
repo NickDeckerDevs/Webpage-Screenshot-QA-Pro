@@ -21,6 +21,9 @@ class FullPageCapture {
       }
     });
 
+    // Check if this page is in screenshot mode
+    this.checkScreenshotMode();
+
     console.log('FullPage Screenshot content script loaded');
   }
 
@@ -260,6 +263,131 @@ class FullPageCapture {
 
   sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  checkScreenshotMode() {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('screenshotMode') === 'true') {
+      this.showScreenshotModeIndicator();
+      
+      // Hide any unwanted elements during screenshot
+      this.hideScreenshotModeElements();
+      
+      // Set viewport width if specified
+      const viewportWidth = urlParams.get('viewportWidth');
+      if (viewportWidth) {
+        this.setViewportWidth(parseInt(viewportWidth));
+      }
+    }
+  }
+
+  showScreenshotModeIndicator() {
+    // Create loading overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'screenshot-mode-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      z-index: 999999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: white;
+      pointer-events: none;
+    `;
+
+    const content = document.createElement('div');
+    content.style.cssText = `
+      text-align: center;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 30px;
+      border-radius: 12px;
+      backdrop-filter: blur(10px);
+    `;
+
+    // Animated loading spinner
+    const spinner = document.createElement('div');
+    spinner.style.cssText = `
+      width: 48px;
+      height: 48px;
+      border: 4px solid rgba(255, 255, 255, 0.3);
+      border-top: 4px solid #3b82f6;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 20px;
+    `;
+
+    const text = document.createElement('div');
+    text.innerHTML = `
+      <h3 style="margin: 0 0 10px; font-size: 18px; font-weight: 600;">Screenshot Mode Active</h3>
+      <p style="margin: 0; font-size: 14px; opacity: 0.9;">Please do not interact with this window</p>
+      <p style="margin: 10px 0 0; font-size: 12px; opacity: 0.7;">Screenshot capture in progress...</p>
+    `;
+
+    // Add CSS for spinner animation
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    `;
+    document.head.appendChild(style);
+
+    content.appendChild(spinner);
+    content.appendChild(text);
+    overlay.appendChild(content);
+    document.body.appendChild(overlay);
+
+    // Hide overlay after 3 seconds to allow screenshot capture
+    setTimeout(() => {
+      overlay.style.display = 'none';
+    }, 3000);
+  }
+
+  hideScreenshotModeElements() {
+    // Hide common unwanted elements during screenshot
+    const hideSelectors = [
+      '[data-testid="cookie-banner"]',
+      '.cookie-banner',
+      '.gdpr-banner',
+      '.notification-bar',
+      '.floating-chat',
+      '.live-chat',
+      '[role="dialog"]',
+      '.modal-backdrop',
+      '.popup-overlay'
+    ];
+
+    hideSelectors.forEach(selector => {
+      const elements = document.querySelectorAll(selector);
+      elements.forEach(el => {
+        el.style.display = 'none';
+      });
+    });
+  }
+
+  setViewportWidth(targetWidth) {
+    // This function helps ensure the page renders at the target width
+    const currentWidth = window.innerWidth;
+    
+    if (Math.abs(currentWidth - targetWidth) > 50) {
+      // Add a meta viewport tag if it doesn't exist
+      let viewportMeta = document.querySelector('meta[name="viewport"]');
+      if (!viewportMeta) {
+        viewportMeta = document.createElement('meta');
+        viewportMeta.name = 'viewport';
+        document.head.appendChild(viewportMeta);
+      }
+      
+      // Set viewport to target width
+      viewportMeta.content = `width=${targetWidth}, initial-scale=1.0, user-scalable=no`;
+    }
   }
 }
 

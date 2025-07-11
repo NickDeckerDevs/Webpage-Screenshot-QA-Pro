@@ -2,6 +2,7 @@ modules = ["nodejs-20", "python-3.11"]
 
 [nix]
 channel = "stable-24_05"
+packages = ["chromium"]
 
 [workflows]
 runButton = "Project"
@@ -34,7 +35,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "google-chrome --load-extension=. --new-window"
+args = "chromium --load-extension=. --new-window --no-sandbox --disable-dev-shm-usage"
 
 [[ports]]
 localPort = 5000

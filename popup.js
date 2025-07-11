@@ -74,24 +74,24 @@ class ScreenshotExtension {
         throw new Error('No active tab found');
       }
 
-      // Step 1: Prepare for capture
-      this.updateLoadingStep('Preparing page for capture...');
+      // Step 1: Create new window with target viewport size
+      this.updateLoadingStep('Creating capture window...');
+      const captureWindow = await this.createCaptureWindow(tab.url);
       
-      // Step 2: Resize viewport if needed
-      this.updateLoadingStep('Adjusting viewport size...');
-      await this.adjustViewport(tab.id);
+      // Step 2: Wait for page to load in new window
+      this.updateLoadingStep('Loading page in capture window...');
+      await this.waitForPageLoad(captureWindow.tabs[0].id);
       
-      // Step 3: Wait for page to stabilize
-      this.updateLoadingStep('Waiting for page to stabilize...');
-      await this.waitForPageStable(tab.id);
-      
-      // Step 4: Capture screenshot
+      // Step 3: Capture full page with scroll and stitch
       this.updateLoadingStep('Capturing full page screenshot...');
-      const screenshotData = await this.captureFullPage(tab.id);
+      const screenshotData = await this.captureFullPageScrollStitch(captureWindow.tabs[0].id);
       
-      // Step 5: Process and download
+      // Step 4: Process and download
       this.updateLoadingStep('Processing and downloading...');
       await this.downloadScreenshot(screenshotData, tab.title || 'screenshot');
+      
+      // Step 5: Close capture window
+      await chrome.windows.remove(captureWindow.id);
       
       this.showSuccessState();
       
@@ -103,114 +103,93 @@ class ScreenshotExtension {
     }
   }
 
-  async adjustViewport(tabId) {
-    return new Promise((resolve, reject) => {
-      chrome.scripting.executeScript({
-        target: { tabId },
-        func: (targetWidth) => {
-          return new Promise((resolve) => {
-            // Store original viewport
-            const originalWidth = window.innerWidth;
-            
-            // Calculate zoom level to achieve target width
-            const zoomLevel = targetWidth / window.screen.width;
-            
-            // Apply zoom if needed
-            if (Math.abs(window.innerWidth - targetWidth) > 50) {
-              document.body.style.zoom = zoomLevel;
-              
-              // Wait for zoom to apply
-              setTimeout(() => {
-                resolve({ 
-                  success: true, 
-                  originalWidth, 
-                  newWidth: window.innerWidth,
-                  zoomApplied: zoomLevel 
-                });
-              }, 500);
-            } else {
-              resolve({ 
-                success: true, 
-                originalWidth, 
-                newWidth: window.innerWidth,
-                zoomApplied: 1 
-              });
-            }
-          });
-        },
-        args: [this.selectedViewport]
-      }, (results) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(`Viewport adjustment failed: ${chrome.runtime.lastError.message}`));
-        } else if (results && results[0] && results[0].result) {
-          resolve(results[0].result);
-        } else {
-          reject(new Error('Failed to adjust viewport'));
-        }
-      });
+  async createCaptureWindow(url) {
+    // Add screenshot mode parameter to URL
+    const captureUrl = new URL(url);
+    captureUrl.searchParams.set('screenshotMode', 'true');
+    captureUrl.searchParams.set('viewportWidth', this.selectedViewport);
+    
+    // Create new window with exact viewport dimensions
+    // Add extra space for browser chrome (approximately 80px for address bar, etc.)
+    const windowWidth = this.selectedViewport + 20; // Small padding for scrollbars
+    const windowHeight = 800; // Reasonable initial height
+    
+    return await chrome.windows.create({
+      url: captureUrl.toString(),
+      type: 'normal',
+      width: windowWidth,
+      height: windowHeight,
+      focused: false // Don't steal focus from current window
     });
   }
 
-  async waitForPageStable(tabId) {
+  async waitForPageLoad(tabId) {
     return new Promise((resolve) => {
-      // Wait for any dynamic content to load
-      setTimeout(resolve, 1000);
+      const checkComplete = () => {
+        chrome.tabs.get(tabId, (tab) => {
+          if (chrome.runtime.lastError) {
+            resolve(); // Tab might be closed
+            return;
+          }
+          
+          if (tab.status === 'complete') {
+            // Additional wait for dynamic content
+            setTimeout(resolve, 2000);
+          } else {
+            setTimeout(checkComplete, 500);
+          }
+        });
+      };
+      
+      checkComplete();
     });
   }
 
-  async captureFullPage(tabId) {
-    return new Promise((resolve, reject) => {
-      chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => {
-          return new Promise((resolve) => {
-            // Get full page dimensions
-            const body = document.body;
-            const html = document.documentElement;
-            
-            const height = Math.max(
-              body.scrollHeight, 
-              body.offsetHeight,
-              html.clientHeight, 
-              html.scrollHeight, 
-              html.offsetHeight
-            );
-            
-            const width = Math.max(
-              body.scrollWidth, 
-              body.offsetWidth,
-              html.clientWidth, 
-              html.scrollWidth, 
-              html.offsetWidth
-            );
-
-            resolve({ width, height });
-          });
-        }
-      }, async (results) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(`Page dimension calculation failed: ${chrome.runtime.lastError.message}`));
-          return;
-        }
-
-        const { width, height } = results[0].result;
-        
-        try {
-          // Capture visible area first
-          const dataUrl = await chrome.tabs.captureVisibleTab(null, { 
-            format: 'png',
-            quality: 100 
-          });
-          
-          // For now, we'll use the visible area capture
-          // In a more advanced implementation, you would scroll and capture multiple segments
-          resolve(dataUrl);
-          
-        } catch (error) {
-          reject(new Error(`Screenshot capture failed: ${error.message}`));
-        }
+  async captureFullPageScrollStitch(tabId) {
+    // First, get page dimensions
+    const dimensions = await this.getPageDimensions(tabId);
+    const { totalHeight, viewportHeight } = dimensions;
+    
+    // Calculate number of scroll steps needed
+    const scrollSteps = Math.ceil(totalHeight / viewportHeight);
+    
+    if (scrollSteps <= 1) {
+      // Single viewport capture
+      return await chrome.tabs.captureVisibleTab(null, { 
+        format: 'png',
+        quality: 100 
       });
-    });
+    }
+    
+    // Multiple viewport captures with stitching
+    const captures = [];
+    
+    for (let step = 0; step < scrollSteps; step++) {
+      this.updateLoadingStep(`Capturing section ${step + 1} of ${scrollSteps}...`);
+      
+      // Scroll to position
+      const scrollY = step * viewportHeight;
+      await this.scrollToPosition(tabId, scrollY);
+      
+      // Wait for scroll to complete
+      await this.sleep(500);
+      
+      // Capture this section
+      const sectionCapture = await chrome.tabs.captureVisibleTab(null, { 
+        format: 'png',
+        quality: 100 
+      });
+      
+      captures.push({
+        dataUrl: sectionCapture,
+        step,
+        scrollY
+      });
+    }
+    
+    // Stitch all captures together
+    this.updateLoadingStep('Stitching screenshots together...');
+    return await this.stitchScreenshots(captures, dimensions);
   }
 
   async downloadScreenshot(dataUrl, title) {
@@ -292,6 +271,106 @@ class ScreenshotExtension {
 
   updateLoadingStep(step) {
     document.getElementById('loadingStep').textContent = step;
+  }
+
+  async getPageDimensions(tabId) {
+    return new Promise((resolve, reject) => {
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const body = document.body;
+          const html = document.documentElement;
+          
+          return {
+            totalHeight: Math.max(
+              body.scrollHeight, 
+              body.offsetHeight,
+              html.clientHeight, 
+              html.scrollHeight, 
+              html.offsetHeight
+            ),
+            totalWidth: Math.max(
+              body.scrollWidth, 
+              body.offsetWidth,
+              html.clientWidth, 
+              html.scrollWidth, 
+              html.offsetWidth
+            ),
+            viewportHeight: window.innerHeight,
+            viewportWidth: window.innerWidth
+          };
+        }
+      }, (results) => {
+        if (chrome.runtime.lastError || !results || !results[0]) {
+          reject(new Error('Failed to get page dimensions'));
+        } else {
+          resolve(results[0].result);
+        }
+      });
+    });
+  }
+
+  async scrollToPosition(tabId, scrollY) {
+    return new Promise((resolve, reject) => {
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: (targetY) => {
+          window.scrollTo(0, targetY);
+          return window.scrollY;
+        },
+        args: [scrollY]
+      }, (results) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error('Failed to scroll to position'));
+        } else {
+          resolve(results[0].result);
+        }
+      });
+    });
+  }
+
+  async stitchScreenshots(captures, dimensions) {
+    return new Promise((resolve, reject) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      // Set canvas size to full page dimensions
+      canvas.width = dimensions.viewportWidth;
+      canvas.height = dimensions.totalHeight;
+      
+      // Fill with white background
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      let loadedImages = 0;
+      const totalImages = captures.length;
+      
+      captures.forEach((capture, index) => {
+        const img = new Image();
+        img.onload = () => {
+          // Draw image at correct vertical position
+          const yPosition = capture.step * dimensions.viewportHeight;
+          ctx.drawImage(img, 0, yPosition);
+          
+          loadedImages++;
+          if (loadedImages === totalImages) {
+            // All images loaded and drawn
+            const finalDataUrl = canvas.toDataURL('image/png', 1.0);
+            resolve(finalDataUrl);
+          }
+        };
+        
+        img.onerror = () => {
+          reject(new Error(`Failed to load screenshot section ${index + 1}`));
+        };
+        
+        img.src = capture.dataUrl;
+      });
+    });
+  }
+
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 

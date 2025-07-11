@@ -7,6 +7,7 @@ FullPage Screenshot Pro is a Chrome browser extension that enables users to capt
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
+Screenshot requirements: Clean output without browser chrome artifacts, full page vertical capture, precise viewport width control.
 
 ## System Architecture
 
@@ -15,12 +16,16 @@ The extension follows Chrome Extension Manifest V3 architecture with a service w
 ### Key Architectural Decisions
 
 **Problem**: Need to capture full webpage screenshots that extend beyond the visible viewport
-**Solution**: Combination of Chrome extension APIs with HTML5 Canvas rendering and DOM manipulation
-**Rationale**: Provides reliable screenshot capture without requiring external services or server-side processing
+**Solution**: Scroll-and-stitch methodology using multiple chrome.tabs.captureVisibleTab calls combined with Canvas stitching
+**Rationale**: Provides complete page capture without truncation at viewport boundaries
 
 **Problem**: Supporting different viewport widths for responsive design testing
-**Solution**: Viewport simulation through CSS manipulation before capture
-**Rationale**: Allows designers and developers to capture screenshots at different breakpoints
+**Solution**: New browser window creation with exact viewport dimensions plus URL parameter detection
+**Rationale**: Eliminates browser chrome artifacts and provides clean screenshots at precise target widths
+
+**Problem**: Previous CSS zoom approach created poor quality screenshots with browser window artifacts
+**Solution**: chrome.windows.create() API to open dedicated capture windows with exact dimensions
+**Rationale**: Clean screenshots without zoom artifacts or unwanted browser UI elements
 
 ## Key Components
 
@@ -59,19 +64,22 @@ The extension follows Chrome Extension Manifest V3 architecture with a service w
 
 1. **User Interaction**: User clicks extension icon, popup opens with viewport options
 2. **Viewport Selection**: User selects desired viewport width from predefined options
-3. **Capture Initiation**: User clicks capture button, popup sends message to background script
-4. **Script Injection**: Background script injects content script into active tab
-5. **Page Preparation**: Content script modifies page viewport and prepares for capture
-6. **Screenshot Generation**: Advanced capture module renders full page to canvas
-7. **Image Processing**: Canvas content converted to desired image format
-8. **Download/Save**: Processed image made available for download
+3. **Capture Initiation**: User clicks capture button, triggers new window creation workflow
+4. **Window Creation**: Extension creates new browser window with exact target viewport dimensions
+5. **URL Parameter Injection**: Original URL loaded with screenshotMode=true and viewportWidth parameters
+6. **Screenshot Mode Detection**: Content script detects parameters and shows loading indicator
+7. **Page Preparation**: Content script hides unwanted elements (banners, popups, etc.)
+8. **Scroll-and-Capture**: Extension scrolls through page sections, capturing each viewport-sized segment
+9. **Image Stitching**: Canvas-based stitching combines all segments into complete page screenshot
+10. **Download/Cleanup**: Final image downloaded, capture window closed automatically
 
 ## External Dependencies
 
 ### Chrome Extension APIs
 - **chrome.runtime**: Message passing and extension lifecycle
 - **chrome.scripting**: Dynamic script injection
-- **chrome.tabs**: Tab management and communication
+- **chrome.tabs**: Tab management, communication, and visible area capture
+- **chrome.windows**: New window creation with specific dimensions
 - **chrome.action**: Extension icon and popup handling
 - **chrome.downloads**: File download functionality
 - **chrome.storage**: Settings persistence
@@ -88,7 +96,7 @@ The extension operates entirely client-side without requiring external APIs, dat
 
 ### Chrome Web Store Distribution
 - **Manifest V3 Compliance**: Uses service worker instead of background pages
-- **Permission Model**: Requests minimal permissions (activeTab, scripting, downloads, storage)
+- **Permission Model**: Requests minimal permissions (activeTab, tabs, scripting, downloads, storage)
 - **Host Permissions**: Requires access to all URLs for screenshot functionality
 
 ### Local Development
