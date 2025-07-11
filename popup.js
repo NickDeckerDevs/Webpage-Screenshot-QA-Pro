@@ -74,23 +74,37 @@ class ScreenshotExtension {
         throw new Error('No active tab found');
       }
 
-      // Step 1: Create new window with target viewport size
-      this.updateLoadingStep('Creating capture window...');
-      const captureWindow = await this.createCaptureWindow(tab.url);
+      // Step 1: Create analysis window to measure page height
+      this.updateLoadingStep('Analyzing website page...');
+      const analysisWindow = await this.createAnalysisWindow(tab.url);
       
-      // Step 2: Wait for page to load in new window
+      // Step 2: Wait for analysis to complete and get dimensions
+      this.updateLoadingStep('Measuring page dimensions...');
+      const pageDimensions = await this.waitForDimensionAnalysis(analysisWindow.tabs[0].id);
+      
+      // Step 3: Close analysis window
+      await chrome.windows.remove(analysisWindow.id);
+      
+      // Step 4: Create capture window with exact dimensions
+      this.updateLoadingStep('Creating capture window...');
+      const captureWindow = await this.createCaptureWindow(tab.url, pageDimensions);
+      
+      // Step 5: Wait for page to load completely
       this.updateLoadingStep('Loading page in capture window...');
       await this.waitForPageLoad(captureWindow.tabs[0].id);
       
-      // Step 3: Capture full page with scroll and stitch
+      // Step 6: Take single screenshot of entire viewport
       this.updateLoadingStep('Capturing full page screenshot...');
-      const screenshotData = await this.captureFullPageScrollStitch(captureWindow.tabs[0].id);
+      const screenshotData = await chrome.tabs.captureVisibleTab(captureWindow.id, { 
+        format: 'png',
+        quality: 100 
+      });
       
-      // Step 4: Process and download
+      // Step 7: Process and download
       this.updateLoadingStep('Processing and downloading...');
       await this.downloadScreenshot(screenshotData, tab.title || 'screenshot');
       
-      // Step 5: Close capture window
+      // Step 8: Close capture window
       await chrome.windows.remove(captureWindow.id);
       
       this.showSuccessState();
@@ -103,23 +117,89 @@ class ScreenshotExtension {
     }
   }
 
-  async createCaptureWindow(url) {
+  async createAnalysisWindow(url) {
+    // Add analysis mode parameter to URL
+    const analysisUrl = new URL(url);
+    analysisUrl.searchParams.set('getVerticalSize', 'true');
+    analysisUrl.searchParams.set('viewportWidth', this.selectedViewport);
+    
+    // Create window with target width but normal height for analysis
+    const windowWidth = this.selectedViewport + 20; // Small padding for scrollbars
+    const windowHeight = 800; // Standard height for analysis
+    
+    return await chrome.windows.create({
+      url: analysisUrl.toString(),
+      type: 'normal',
+      width: windowWidth,
+      height: windowHeight,
+      focused: false // Don't steal focus from current window
+    });
+  }
+
+  async createCaptureWindow(url, dimensions) {
     // Add screenshot mode parameter to URL
     const captureUrl = new URL(url);
     captureUrl.searchParams.set('screenshotMode', 'true');
     captureUrl.searchParams.set('viewportWidth', this.selectedViewport);
     
-    // Create new window with exact viewport dimensions
-    // Add extra space for browser chrome (approximately 80px for address bar, etc.)
-    const windowWidth = this.selectedViewport + 20; // Small padding for scrollbars
-    const windowHeight = 800; // Reasonable initial height
+    // Create window with exact page dimensions
+    // Add chrome space: ~80px for address bar, ~20px for scrollbars
+    const windowWidth = this.selectedViewport + 20;
+    const windowHeight = dimensions.totalHeight + 100; // Add chrome space
+    
+    // Chrome has limits on window size, so cap it at screen size
+    const maxHeight = 1200; // Reasonable max height
+    const finalHeight = Math.min(windowHeight, maxHeight);
     
     return await chrome.windows.create({
       url: captureUrl.toString(),
       type: 'normal',
       width: windowWidth,
-      height: windowHeight,
+      height: finalHeight,
       focused: false // Don't steal focus from current window
+    });
+  }
+
+  async waitForDimensionAnalysis(tabId) {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Dimension analysis timeout'));
+      }, 15000); // 15 second timeout
+
+      const checkForDimensions = () => {
+        chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            // Check if analysis is complete
+            return window.dimensionAnalysisComplete || false;
+          }
+        }, (results) => {
+          if (chrome.runtime.lastError || !results || !results[0]) {
+            setTimeout(checkForDimensions, 500);
+            return;
+          }
+
+          if (results[0].result) {
+            // Analysis complete, get dimensions
+            chrome.scripting.executeScript({
+              target: { tabId },
+              func: () => window.pageDimensions
+            }, (dimensionResults) => {
+              clearTimeout(timeout);
+              if (dimensionResults && dimensionResults[0] && dimensionResults[0].result) {
+                resolve(dimensionResults[0].result);
+              } else {
+                reject(new Error('Failed to get page dimensions'));
+              }
+            });
+          } else {
+            setTimeout(checkForDimensions, 500);
+          }
+        });
+      };
+
+      // Start checking after initial load
+      setTimeout(checkForDimensions, 1000);
     });
   }
 
@@ -145,77 +225,7 @@ class ScreenshotExtension {
     });
   }
 
-  async captureFullPageScrollStitch(tabId) {
-    // First, scroll to top to ensure consistent starting point
-    await this.scrollToPosition(tabId, 0);
-    await this.sleep(500);
-    
-    // Get page dimensions
-    const dimensions = await this.getPageDimensions(tabId);
-    const { totalHeight, viewportHeight } = dimensions;
-    
-    console.log('Page dimensions:', dimensions);
-    
-    // Calculate number of scroll steps needed with some overlap to avoid gaps
-    const overlap = Math.floor(viewportHeight * 0.1); // 10% overlap
-    const effectiveScrollHeight = viewportHeight - overlap;
-    const scrollSteps = Math.max(1, Math.ceil((totalHeight - viewportHeight) / effectiveScrollHeight) + 1);
-    
-    console.log(`Will capture ${scrollSteps} sections with ${overlap}px overlap`);
-    
-    if (scrollSteps <= 1) {
-      // Single viewport capture
-      return await chrome.tabs.captureVisibleTab(null, { 
-        format: 'png',
-        quality: 100 
-      });
-    }
-    
-    // Multiple viewport captures with stitching
-    const captures = [];
-    
-    for (let step = 0; step < scrollSteps; step++) {
-      this.updateLoadingStep(`Capturing section ${step + 1} of ${scrollSteps}...`);
-      
-      // Calculate scroll position
-      let scrollY;
-      if (step === 0) {
-        scrollY = 0;
-      } else if (step === scrollSteps - 1) {
-        // Last capture - scroll to show the bottom of the page
-        scrollY = Math.max(0, totalHeight - viewportHeight);
-      } else {
-        scrollY = step * effectiveScrollHeight;
-      }
-      
-      console.log(`Step ${step + 1}: scrolling to ${scrollY}`);
-      
-      // Scroll to position
-      await this.scrollToPosition(tabId, scrollY);
-      
-      // Wait for scroll to complete and content to stabilize
-      await this.sleep(800);
-      
-      // Capture this section
-      const sectionCapture = await chrome.tabs.captureVisibleTab(null, { 
-        format: 'png',
-        quality: 100 
-      });
-      
-      captures.push({
-        dataUrl: sectionCapture,
-        step,
-        scrollY
-      });
-    }
-    
-    // Scroll back to top
-    await this.scrollToPosition(tabId, 0);
-    
-    // Stitch all captures together
-    this.updateLoadingStep('Stitching screenshots together...');
-    return await this.stitchScreenshots(captures, dimensions);
-  }
+
 
   async downloadScreenshot(dataUrl, title) {
     return new Promise((resolve, reject) => {

@@ -267,7 +267,13 @@ class FullPageCapture {
 
   checkScreenshotMode() {
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('screenshotMode') === 'true') {
+    
+    if (urlParams.get('getVerticalSize') === 'true') {
+      // Analysis mode - measure page dimensions
+      this.showAnalysisModeIndicator();
+      this.performDimensionAnalysis(urlParams.get('viewportWidth'));
+    } else if (urlParams.get('screenshotMode') === 'true') {
+      // Screenshot mode - prepare for capture
       this.showScreenshotModeIndicator();
       
       // Hide any unwanted elements during screenshot
@@ -387,6 +393,141 @@ class FullPageCapture {
       
       // Set viewport to target width
       viewportMeta.content = `width=${targetWidth}, initial-scale=1.0, user-scalable=no`;
+    }
+  }
+
+  showAnalysisModeIndicator() {
+    // Create analysis overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'analysis-mode-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(59, 130, 246, 0.9);
+      z-index: 999999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: white;
+      pointer-events: none;
+    `;
+
+    const content = document.createElement('div');
+    content.style.cssText = `
+      text-align: center;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 30px;
+      border-radius: 12px;
+      backdrop-filter: blur(10px);
+    `;
+
+    // Analysis spinner
+    const spinner = document.createElement('div');
+    spinner.style.cssText = `
+      width: 48px;
+      height: 48px;
+      border: 4px solid rgba(255, 255, 255, 0.3);
+      border-top: 4px solid white;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 20px;
+    `;
+
+    const text = document.createElement('div');
+    text.innerHTML = `
+      <h3 style="margin: 0 0 10px; font-size: 18px; font-weight: 600;">Analyzing Website Page</h3>
+      <p style="margin: 0; font-size: 14px; opacity: 0.9;">Measuring page dimensions for optimal capture</p>
+      <p style="margin: 10px 0 0; font-size: 12px; opacity: 0.7;">This will only take a moment...</p>
+    `;
+
+    content.appendChild(spinner);
+    content.appendChild(text);
+    overlay.appendChild(content);
+    document.body.appendChild(overlay);
+  }
+
+  performDimensionAnalysis(viewportWidth) {
+    // Set viewport width first if specified
+    if (viewportWidth) {
+      this.setViewportWidth(parseInt(viewportWidth));
+    }
+
+    // Wait for page to fully load and render
+    const startAnalysis = () => {
+      // Force layout recalculation
+      document.body.offsetHeight;
+      
+      // Get comprehensive page dimensions
+      const body = document.body;
+      const html = document.documentElement;
+      
+      // Wait a bit more for dynamic content
+      setTimeout(() => {
+        // Calculate all possible heights
+        const heights = [
+          body.scrollHeight,
+          body.offsetHeight,
+          html.scrollHeight,
+          html.offsetHeight,
+          html.clientHeight
+        ];
+        
+        // Check all elements for maximum bounds
+        let maxBottom = 0;
+        const allElements = document.querySelectorAll('*');
+        allElements.forEach(el => {
+          try {
+            const rect = el.getBoundingClientRect();
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            maxBottom = Math.max(maxBottom, rect.bottom + scrollTop);
+          } catch (e) {
+            // Skip elements that can't be measured
+          }
+        });
+        
+        const totalHeight = Math.max(...heights, maxBottom, window.innerHeight);
+        
+        // Store dimensions globally for popup to access
+        window.pageDimensions = {
+          totalHeight,
+          totalWidth: Math.max(
+            body.scrollWidth,
+            body.offsetWidth,
+            html.scrollWidth,
+            html.offsetWidth,
+            html.clientWidth,
+            window.innerWidth
+          ),
+          viewportHeight: window.innerHeight,
+          viewportWidth: window.innerWidth,
+          analysisComplete: true
+        };
+        
+        // Mark analysis as complete
+        window.dimensionAnalysisComplete = true;
+        
+        console.log('Dimension analysis complete:', window.pageDimensions);
+        
+        // Hide analysis overlay after a short delay
+        setTimeout(() => {
+          const overlay = document.getElementById('analysis-mode-overlay');
+          if (overlay) {
+            overlay.style.display = 'none';
+          }
+        }, 1000);
+        
+      }, 2000); // Give extra time for content to load
+    };
+
+    // Start analysis after page is ready
+    if (document.readyState === 'complete') {
+      startAnalysis();
+    } else {
+      window.addEventListener('load', startAnalysis);
     }
   }
 }
