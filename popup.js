@@ -146,12 +146,22 @@ class ScreenshotExtension {
   }
 
   async captureFullPageScrollStitch(tabId) {
-    // First, get page dimensions
+    // First, scroll to top to ensure consistent starting point
+    await this.scrollToPosition(tabId, 0);
+    await this.sleep(500);
+    
+    // Get page dimensions
     const dimensions = await this.getPageDimensions(tabId);
     const { totalHeight, viewportHeight } = dimensions;
     
-    // Calculate number of scroll steps needed
-    const scrollSteps = Math.ceil(totalHeight / viewportHeight);
+    console.log('Page dimensions:', dimensions);
+    
+    // Calculate number of scroll steps needed with some overlap to avoid gaps
+    const overlap = Math.floor(viewportHeight * 0.1); // 10% overlap
+    const effectiveScrollHeight = viewportHeight - overlap;
+    const scrollSteps = Math.max(1, Math.ceil((totalHeight - viewportHeight) / effectiveScrollHeight) + 1);
+    
+    console.log(`Will capture ${scrollSteps} sections with ${overlap}px overlap`);
     
     if (scrollSteps <= 1) {
       // Single viewport capture
@@ -167,12 +177,24 @@ class ScreenshotExtension {
     for (let step = 0; step < scrollSteps; step++) {
       this.updateLoadingStep(`Capturing section ${step + 1} of ${scrollSteps}...`);
       
+      // Calculate scroll position
+      let scrollY;
+      if (step === 0) {
+        scrollY = 0;
+      } else if (step === scrollSteps - 1) {
+        // Last capture - scroll to show the bottom of the page
+        scrollY = Math.max(0, totalHeight - viewportHeight);
+      } else {
+        scrollY = step * effectiveScrollHeight;
+      }
+      
+      console.log(`Step ${step + 1}: scrolling to ${scrollY}`);
+      
       // Scroll to position
-      const scrollY = step * viewportHeight;
       await this.scrollToPosition(tabId, scrollY);
       
-      // Wait for scroll to complete
-      await this.sleep(500);
+      // Wait for scroll to complete and content to stabilize
+      await this.sleep(800);
       
       // Capture this section
       const sectionCapture = await chrome.tabs.captureVisibleTab(null, { 
@@ -186,6 +208,9 @@ class ScreenshotExtension {
         scrollY
       });
     }
+    
+    // Scroll back to top
+    await this.scrollToPosition(tabId, 0);
     
     // Stitch all captures together
     this.updateLoadingStep('Stitching screenshots together...');
@@ -278,32 +303,71 @@ class ScreenshotExtension {
       chrome.scripting.executeScript({
         target: { tabId },
         func: () => {
-          const body = document.body;
-          const html = document.documentElement;
-          
-          return {
-            totalHeight: Math.max(
-              body.scrollHeight, 
+          // Wait for page to fully load and measure
+          const measureDimensions = () => {
+            const body = document.body;
+            const html = document.documentElement;
+            
+            // Force a layout calculation
+            body.offsetHeight;
+            
+            // Get all possible height measurements
+            const heights = [
+              body.scrollHeight,
               body.offsetHeight,
-              html.clientHeight, 
-              html.scrollHeight, 
-              html.offsetHeight
-            ),
-            totalWidth: Math.max(
-              body.scrollWidth, 
+              html.scrollHeight,
+              html.offsetHeight,
+              html.clientHeight
+            ];
+            
+            const widths = [
+              body.scrollWidth,
               body.offsetWidth,
-              html.clientWidth, 
-              html.scrollWidth, 
-              html.offsetWidth
-            ),
-            viewportHeight: window.innerHeight,
-            viewportWidth: window.innerWidth
+              html.scrollWidth,
+              html.offsetWidth,
+              html.clientWidth
+            ];
+            
+            // Also check for any absolutely positioned elements that might extend beyond
+            const allElements = document.querySelectorAll('*');
+            let maxBottom = 0;
+            let maxRight = 0;
+            
+            allElements.forEach(el => {
+              const rect = el.getBoundingClientRect();
+              const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+              const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+              
+              maxBottom = Math.max(maxBottom, rect.bottom + scrollTop);
+              maxRight = Math.max(maxRight, rect.right + scrollLeft);
+            });
+            
+            return {
+              totalHeight: Math.max(...heights, maxBottom, window.innerHeight),
+              totalWidth: Math.max(...widths, maxRight, window.innerWidth),
+              viewportHeight: window.innerHeight,
+              viewportWidth: window.innerWidth,
+              debug: {
+                bodyScrollHeight: body.scrollHeight,
+                htmlScrollHeight: html.scrollHeight,
+                maxElementBottom: maxBottom,
+                calculatedHeights: heights
+              }
+            };
           };
+          
+          // Wait a bit for dynamic content to load
+          return new Promise(resolve => {
+            setTimeout(() => {
+              resolve(measureDimensions());
+            }, 1000);
+          });
         }
       }, (results) => {
         if (chrome.runtime.lastError || !results || !results[0]) {
           reject(new Error('Failed to get page dimensions'));
         } else {
+          console.log('Page dimensions:', results[0].result);
           resolve(results[0].result);
         }
       });
@@ -315,14 +379,29 @@ class ScreenshotExtension {
       chrome.scripting.executeScript({
         target: { tabId },
         func: (targetY) => {
-          window.scrollTo(0, targetY);
-          return window.scrollY;
+          // Use smooth scroll behavior for better content loading
+          window.scrollTo({
+            top: targetY,
+            left: 0,
+            behavior: 'auto'
+          });
+          
+          // Force a layout recalculation
+          document.body.offsetHeight;
+          
+          // Return actual scroll position after scrolling
+          return {
+            requestedY: targetY,
+            actualY: window.scrollY,
+            maxScrollY: document.documentElement.scrollHeight - window.innerHeight
+          };
         },
         args: [scrollY]
       }, (results) => {
         if (chrome.runtime.lastError) {
           reject(new Error('Failed to scroll to position'));
         } else {
+          console.log('Scroll result:', results[0].result);
           resolve(results[0].result);
         }
       });
@@ -338,6 +417,8 @@ class ScreenshotExtension {
       canvas.width = dimensions.viewportWidth;
       canvas.height = dimensions.totalHeight;
       
+      console.log(`Creating canvas: ${canvas.width}x${canvas.height} for ${captures.length} captures`);
+      
       // Fill with white background
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -345,22 +426,38 @@ class ScreenshotExtension {
       let loadedImages = 0;
       const totalImages = captures.length;
       
+      if (totalImages === 0) {
+        reject(new Error('No captures to stitch'));
+        return;
+      }
+      
       captures.forEach((capture, index) => {
         const img = new Image();
         img.onload = () => {
-          // Draw image at correct vertical position
-          const yPosition = capture.step * dimensions.viewportHeight;
+          // Calculate position - be more careful about overlaps
+          let yPosition = capture.scrollY;
+          
+          // For the last capture, make sure it fits within canvas bounds
+          if (index === captures.length - 1) {
+            yPosition = Math.min(yPosition, dimensions.totalHeight - img.height);
+          }
+          
+          console.log(`Drawing capture ${index + 1} at position y=${yPosition}, image size: ${img.width}x${img.height}`);
+          
+          // Draw the image
           ctx.drawImage(img, 0, yPosition);
           
           loadedImages++;
           if (loadedImages === totalImages) {
             // All images loaded and drawn
+            console.log('All captures stitched, converting to data URL');
             const finalDataUrl = canvas.toDataURL('image/png', 1.0);
             resolve(finalDataUrl);
           }
         };
         
         img.onerror = () => {
+          console.error(`Failed to load capture ${index + 1}`);
           reject(new Error(`Failed to load screenshot section ${index + 1}`));
         };
         
