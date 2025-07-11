@@ -271,19 +271,13 @@ class FullPageCapture {
     if (urlParams.get('getVerticalSize') === 'true') {
       // Analysis mode - measure page dimensions
       this.showAnalysisModeIndicator();
-      this.performDimensionAnalysis(urlParams.get('viewportWidth'));
+      this.performDimensionAnalysis();
     } else if (urlParams.get('screenshotMode') === 'true') {
       // Screenshot mode - prepare for capture
       this.showScreenshotModeIndicator();
       
       // Hide any unwanted elements during screenshot
       this.hideScreenshotModeElements();
-      
-      // Set viewport width if specified
-      const viewportWidth = urlParams.get('viewportWidth');
-      if (viewportWidth) {
-        this.setViewportWidth(parseInt(viewportWidth));
-      }
     }
   }
 
@@ -378,23 +372,7 @@ class FullPageCapture {
     });
   }
 
-  setViewportWidth(targetWidth) {
-    // This function helps ensure the page renders at the target width
-    const currentWidth = window.innerWidth;
-    
-    if (Math.abs(currentWidth - targetWidth) > 50) {
-      // Add a meta viewport tag if it doesn't exist
-      let viewportMeta = document.querySelector('meta[name="viewport"]');
-      if (!viewportMeta) {
-        viewportMeta = document.createElement('meta');
-        viewportMeta.name = 'viewport';
-        document.head.appendChild(viewportMeta);
-      }
-      
-      // Set viewport to target width
-      viewportMeta.content = `width=${targetWidth}, initial-scale=1.0, user-scalable=no`;
-    }
-  }
+
 
   showAnalysisModeIndicator() {
     // Create analysis overlay
@@ -450,17 +428,10 @@ class FullPageCapture {
     document.body.appendChild(overlay);
   }
 
-  performDimensionAnalysis(viewportWidth) {
+  performDimensionAnalysis() {
     console.log('🔍 STARTING DIMENSION ANALYSIS:');
     console.log('  - Current URL:', window.location.href);
-    console.log('  - Target viewport width:', viewportWidth);
     console.log('  - Current window size:', `${window.innerWidth}x${window.innerHeight}`);
-    
-    // Set viewport width first if specified
-    if (viewportWidth) {
-      console.log('  - Setting viewport width to:', viewportWidth);
-      this.setViewportWidth(parseInt(viewportWidth));
-    }
 
     // Wait for page to fully load and render
     const startAnalysis = () => {

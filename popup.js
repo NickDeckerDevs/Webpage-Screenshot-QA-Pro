@@ -122,15 +122,14 @@ class ScreenshotExtension {
     // Add analysis mode parameter to URL
     const analysisUrl = new URL(url);
     analysisUrl.searchParams.set('getVerticalSize', 'true');
-    analysisUrl.searchParams.set('viewportWidth', this.selectedViewport);
     
-    // Create window with target width but normal height for analysis
-    const windowWidth = this.selectedViewport + 20; // Small padding for scrollbars
-    const windowHeight = 800; // Standard height for analysis
+    // Create window with selected viewport width and standard height for analysis
+    const windowWidth = this.selectedViewport;
+    const windowHeight = 1200; // Always 1200px for analysis
     
     console.log('🔍 CREATING ANALYSIS WINDOW:');
     console.log('  - URL:', analysisUrl.toString());
-    console.log('  - Target viewport width:', this.selectedViewport);
+    console.log('  - Selected viewport width:', this.selectedViewport);
     console.log('  - Window dimensions:', `${windowWidth}x${windowHeight}`);
     
     const window = await chrome.windows.create({
@@ -149,30 +148,23 @@ class ScreenshotExtension {
     // Add screenshot mode parameter to URL
     const captureUrl = new URL(url);
     captureUrl.searchParams.set('screenshotMode', 'true');
-    captureUrl.searchParams.set('viewportWidth', this.selectedViewport);
     
-    // Create window with exact page dimensions
-    // Add chrome space: ~80px for address bar, ~20px for scrollbars
-    const windowWidth = this.selectedViewport + 20;
-    const windowHeight = dimensions.totalHeight + 100; // Add chrome space
-    
-    // Chrome has limits on window size, so cap it at screen size
-    const maxHeight = 1200; // Reasonable max height
-    const finalHeight = Math.min(windowHeight, maxHeight);
+    // Create window with exact dimensions: selected width × analyzed height
+    const windowWidth = this.selectedViewport;
+    const windowHeight = dimensions.totalHeight;
     
     console.log('📸 CREATING CAPTURE WINDOW:');
     console.log('  - URL:', captureUrl.toString());
     console.log('  - Page dimensions from analysis:', dimensions);
-    console.log('  - Calculated window width:', windowWidth);
-    console.log('  - Calculated window height (before cap):', windowHeight);
-    console.log('  - Final window height (after cap):', finalHeight);
-    console.log('  - Max height limit:', maxHeight);
+    console.log('  - Selected viewport width:', this.selectedViewport);
+    console.log('  - Analyzed page height:', dimensions.totalHeight);
+    console.log('  - Final window dimensions:', `${windowWidth}x${windowHeight}`);
     
     const window = await chrome.windows.create({
       url: captureUrl.toString(),
       type: 'normal',
       width: windowWidth,
-      height: finalHeight,
+      height: windowHeight,
       focused: false // Don't steal focus from current window
     });
     
